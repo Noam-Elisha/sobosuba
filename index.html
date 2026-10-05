@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#262626">
+  <title>sobosuba</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 3c8 0 13 5 13 13s-6 13-13 13S3 24 3 16 8 3 16 3z' fill='%23ff2fa6'/%3E%3Ctext x='16' y='21' font-size='13' font-family='sans-serif' font-weight='bold' text-anchor='middle' fill='%23400'%3E64%3C/text%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&display=swap">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <button id="menuBtn" aria-label="menu"><span></span><span></span><span></span></button>
+
+  <div id="screen-title" class="screen">
+    <div class="card">
+      <h1 class="logo" aria-label="sobosuba">
+        <span style="--c:#ff3537">s</span><span style="--c:#ffe23b">o</span><span style="--c:#62f636">b</span><span style="--c:#32ffc3">o</span><span style="--c:#2a80e2">s</span><span style="--c:#9b30f0">u</span><span style="--c:#fe33af">b</span><span style="--c:#fe7232">a</span>
+      </h1>
+      <p class="tag">squishy merge</p>
+      <ul class="how">
+        <li><b>grab</b> a blob from the top row and <b>drag</b> to aim</li>
+        <li>longer arrow = <b>harder</b> shot. tap = gentle drop</li>
+        <li>equal numbers <b>merge</b> into the next one up</li>
+        <li>don't let the pile reach the red line</li>
+      </ul>
+      <button id="playBtn" class="btn">play</button>
+      <p class="keys">keys: ← → pick · hold space to charge · esc menu · m mute</p>
+    </div>
+  </div>
+
+  <div id="screen-pause" class="screen">
+    <div class="card wide">
+      <h2>paused</h2>
+      <div class="row">
+        <button id="resumeBtn" class="btn">resume</button>
+        <button id="restartBtn" class="btn ghost">restart</button>
+        <button id="soundBtn" class="btn ghost">sound: on</button>
+      </div>
+      <h3>color style</h3>
+      <div id="palettes" class="palettes"></div>
+      <h3>achievements <span id="achCount"></span></h3>
+      <ul id="achList" class="ach"></ul>
+      <p class="credit">a fan-made tribute to <i>sobosuba</i> by keepeetron</p>
+    </div>
+  </div>
+
+  <div id="screen-over" class="screen">
+    <div class="card">
+      <h2>game over</h2>
+      <div id="overScore" class="big">0</div>
+      <div id="newBest" class="badge" hidden>new best!</div>
+      <div id="overBest" class="muted">best 0</div>
+      <button id="againBtn" class="btn">play again</button>
+    </div>
+  </div>
+
+  <div id="toasts"></div>
+
+  <script src="js/audio.js"></script>
+  <script src="js/physics.js"></script>
+  <script src="js/game.js"></script>
+</body>
+</html>

@@ -1,0 +1,4 @@
+.playwright-mcp/
+.claude/
+.DS_Store
+Thumbs.db
