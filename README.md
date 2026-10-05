@@ -16,13 +16,15 @@ Then open http://localhost:8737. Add `?debug` to the URL to show an FPS and bead
 
 - Grab any blob in the top row and drag to aim. A longer arrow means a harder shot.
 - Tap a blob without dragging to drop it gently.
-- When two blobs with the same number touch, they fuse into the next number (1 → 2 → 4 → …).
+- When two blobs with the same number touch, they fuse into the next number (1 → 2 → 4 → …). This works in the top row too.
+- Aim up or sideways to toss a blob over the row. It glides along, drops back in, and merges with whatever matching ammo it lands on, so you can combine ammo before shooting.
+- Every launch brings in one new ammo blob. Merging ammo leaves fewer, bigger shots, but the row never drops below 3.
 - If the pile stays above the red line for 3 seconds, the game is over.
 - Keyboard: ← → pick a blob · hold Space to charge (← → while charging changes the angle) · Esc opens the menu · M mutes.
 
 ## Files
 
-- `js/physics.js`: the soft-body solver. Each blob is a "water balloon": a ring of beads with a floppy skin and incompressible volume. Beads push against the other blob's skin segments rather than its beads, so surfaces slide smoothly. Contacts are nearly frictionless and inelastic, so blobs splat and slosh instead of bouncing. It uses position-based dynamics (XPBD for the skin) with 3 substeps per 120 Hz update, run at half speed (`TIME_SCALE`), and a spatial-hash grid for collisions. The feel constants are at the top of the file.
+- `js/physics.js`: the soft-body solver. Each blob is a "water balloon": a ring of beads with a floppy skin and incompressible volume. Beads push against the other blob's skin segments rather than its beads, so surfaces slide smoothly. Contacts are nearly frictionless and inelastic, so blobs splat and slosh instead of bouncing. Ammo blobs are ordinary blobs held by a soft field along the top: no gravity, squeezed into pills, drawn toward the middle. Held and free blobs collide and merge exactly the same way. It uses position-based dynamics (XPBD for the skin) with 3 substeps per 120 Hz update, run at half speed (`TIME_SCALE`), and a spatial-hash grid for collisions. The feel constants are at the top of the file.
 - Proportions, colors, speeds and wobble were matched against frame-by-frame measurements of real gameplay footage: board shape, blob area growing as value^0.385, shot speed, and how slowly blobs jiggle and slosh.
 - `js/game.js`: game rules, input, rendering, achievements and menus.
 - `js/audio.js`: sound effects synthesized with WebAudio, so there are no sound files.

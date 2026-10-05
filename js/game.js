@@ -12,7 +12,9 @@
   const DANGER_Y = TUBE_BOT + 8;
   const DANGER_TIME = 3;     // seconds above the line before game over
   const MAX_DRAG = 320;      // arrow length for a full-power shot
-  const TUBE_SIZE = 4;
+  const TUBE_SIZE = 4;       // ammo at the start of a game
+  const MIN_AMMO = 3;        // the row is topped back up to this after merges
+  const MAX_AMMO = 6;        // the row never gets more crowded than this
   const MIN_DRAG = 16;
 
   const PALETTES = {
@@ -70,6 +72,7 @@
     dangerT: 0,
     topY: WORLD_H,
     refillT: 0,
+    ammoDue: 0,
     refillWait: 0,
     achTimer: 0,
     time: 0,
@@ -142,7 +145,7 @@
     G.world = new World();
     Object.assign(G, {
       score: 0, dispScore: 0, maxValue: 2, chain: 0, softStreak: 0, shots: 0,
-      dangerT: 0, topY: WORLD_H, refillT: 0, refillWait: 0, achTimer: 0,
+      dangerT: 0, topY: WORLD_H, refillT: 0, refillWait: 0, ammoDue: 0, achTimer: 0,
       aim: null, kb: null, hover: null, shake: 0,
     });
     G.popups.length = 0;
@@ -213,9 +216,17 @@
     return G.world.blobs.filter(b => b.layer === LAYER_TUBE).sort((a, b) => a.cx - b.cx);
   }
 
+  // Like the real game, every launch brings in one new ammo blob, so merging ammo
+  // together in the row leaves you with fewer (but bigger) shots.
   function refill(dt) {
     const tube = tubeBlobs();
-    if (tube.length >= TUBE_SIZE) return;
+    let flying = 0;
+    for (const b of G.world.blobs) if (b.layer === LAYER_PLAY && !b.inPlay) flying++;
+    // ...but merging never leaves the row thinner than MIN_AMMO
+    const short = MIN_AMMO - tube.length - flying;
+    if (short > G.ammoDue) G.ammoDue = short;
+    if (G.ammoDue <= 0) return;
+    if (tube.length >= MAX_AMMO) { G.ammoDue = 0; return; }
     G.refillT -= dt;
     if (G.refillT > 0) return;
     // New ammo slides in through whichever side wall has more room next to it.
@@ -230,6 +241,7 @@
     }
     G.refillWait = 0;
     G.world.spawnTube(spawnValue(), 0, side);
+    G.ammoDue--;
     G.refillT = 0.35;
   }
 
@@ -281,7 +293,7 @@
     }
     if (nb.value === 1024) {
       let n = 0;
-      for (const o of G.world.blobs) if (o.layer === LAYER_PLAY && o.value === 1024) n++;
+      for (const o of G.world.blobs) if (o.value === 1024) n++;
       if (n >= 3) unlock('x3_1024');
     }
     if (G.chain >= 3) unlock('chain3');
@@ -292,7 +304,7 @@
   function checkDanger(dt) {
     let top = WORLD_H;
     for (const b of G.world.blobs) {
-      if (b.layer !== LAYER_PLAY) continue;
+      if (!b.inPlay) continue;   // ammo and blobs still flying above the board don't count
       if (b.morph || (b.shotAge >= 0 && b.shotAge < 1.0)) continue;
       if (b.minY < top) top = b.minY;
     }
@@ -303,7 +315,7 @@
   }
 
   function periodicAchievements() {
-    const play = G.world.blobs.filter(b => b.layer === LAYER_PLAY);
+    const play = G.world.blobs.filter(b => b.inPlay);
     if (play.length >= 40) unlock('crowd');
     if (play.length >= 10 && play.every(b => b.value <= 2 && b.cy > WORLD_H - 48 && !b.morph && b.speed < 40)) {
       unlock('1212');
@@ -377,8 +389,8 @@
     const dx = aim.x - b.cx, dy = aim.y - b.cy;
     const len = Math.hypot(dx, dy);
     if (len < MIN_DRAG) return { blob: b, dx: 0, dy: 1, power: 0 };
-    const ang = Math.max(-1.35, Math.min(1.35, Math.atan2(dx, dy)));
-    return { blob: b, dx: Math.sin(ang), dy: Math.cos(ang), power: Math.min(1, (len - MIN_DRAG) / (MAX_DRAG - MIN_DRAG)) };
+    // any direction: up or sideways launches a blob over the row to land on other ammo
+    return { blob: b, dx: dx / len, dy: dy / len, power: Math.min(1, (len - MIN_DRAG) / (MAX_DRAG - MIN_DRAG)) };
   }
 
   function kbPower(t) { return Math.min(1, t / 1.1); }
@@ -401,6 +413,7 @@
     G.chain = 0;
     G.shots++;
     G.refillT = Math.max(G.refillT, 0.25);
+    G.ammoDue++;
     Sfx.shoot(a.power);
     if (a.power >= 0.98) unlock('cannon');
     if (a.power < 0.12) {
@@ -488,7 +501,10 @@
     if (left || right) {
       e.preventDefault();
       if (G.kb) {
-        G.kb.ang = Math.max(-1.2, Math.min(1.2, G.kb.ang + (left ? -0.12 : 0.12)));
+        // rotate the aim all the way round (0 = straight down, ±π = straight up)
+        G.kb.ang += left ? -0.15 : 0.15;
+        if (G.kb.ang > Math.PI) G.kb.ang -= TAU;
+        if (G.kb.ang < -Math.PI) G.kb.ang += TAU;
       } else {
         if (G.kbMode) G.kbSel += left ? -1 : 1;
         G.kbMode = true;
@@ -753,7 +769,8 @@
   function drawPreview(a) {
     const b = a.blob, W = G.world;
     const speed = shotSpeed(a.power);
-    let x = b.cx, y = b.cy, vx = a.dx * speed, vy = a.dy * speed;
+    const x0 = b.cx, y0 = b.cy;
+    let x = x0, y = y0, vx = a.dx * speed, vy = a.dy * speed;
     const r = blobRadius(b.value) * 0.85;
     const dt = 1 / 120;
     ctx.fillStyle = 'rgba(255,255,255,0.3)';
@@ -761,16 +778,18 @@
       vy += GRAVITY * dt;
       x += vx * dt;
       y += vy * dt;
-      if (x < r || x > WORLD_W - r || y > WORLD_H - r) break;
-      if (y > TUBE_BOT && (i & 1) === 0 && W.circleHitsPlay(x, y, r + RB)) break;
-      if (i % 6 === 3 && y > TUBE_BOT + r) {
+      if (x < r || x > WORLD_W - r || y > WORLD_H - r || y < r) break;
+      // once clear of its neighbours in the row, stop at the first blob it would hit
+      const away = Math.hypot(x - x0, y - y0) > r * 1.3;
+      if (away && (i & 1) === 0 && W.circleHits(x, y, r + RB, b)) break;
+      if (away && i % 6 === 3) {
         ctx.beginPath();
         ctx.arc(x, y, 2, 0, TAU);
         ctx.fill();
       }
     }
     x = Math.max(r, Math.min(WORLD_W - r, x));
-    y = Math.min(WORLD_H - r, y);
+    y = Math.max(r, Math.min(WORLD_H - r, y));
     ctx.save();
     ctx.globalAlpha = 0.5;
     ctx.setLineDash([5, 5]);

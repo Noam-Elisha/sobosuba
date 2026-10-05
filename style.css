@@ -144,7 +144,8 @@ canvas {
 }
 .how li:nth-child(2)::before { background: #4fe94a; }
 .how li:nth-child(3)::before { background: #3b7ff7; }
-.how li:nth-child(4)::before { background: #ff2d2d; }
+.how li:nth-child(4)::before { background: #9b30f0; }
+.how li:nth-child(5)::before { background: #ff3537; }
 .how b { color: #fff; font-weight: 600; }
 
 .keys { margin: 16px 0 0; font-size: 13px; color: #6d6d6d; }

@@ -23,8 +23,8 @@ const R1 = 16.8;           // visual radius of a "1" blob
 const SIZE_EXP = 0.1925;   // visual radius grows as value^SIZE_EXP
 
 const GRAVITY = 300;       // low, like the real game: shots fly nearly straight and wobbles are slow
-const TUBE_TOP = 26;
-const TUBE_BOT = 66;
+const TUBE_TOP = 38;       // the ammo row; the real game leaves ~0.1 board widths
+const TUBE_BOT = 70;       // of open space above it to toss ammo into
 const TUBE_MID = (TUBE_TOP + TUBE_BOT) / 2;
 const TUBE_L = 6;
 const TUBE_R = WORLD_W - 6;
@@ -52,8 +52,14 @@ const STICK_MARGIN = 2.5;  // contacts this close (but not overlapping) still co
 const SKIN_VISCOSITY = 0.16; // smooths bead velocities with their neighbours: kills small ripples, keeps the big wobble
 const VMAX = 2400;
 
-const LAYER_TUBE = 0;
-const LAYER_PLAY = 1;
+// Ammo blobs are "held" by a field along the top of the board; every other blob
+// is "free" and falls under gravity. Apart from that they are identical: held and
+// free blobs collide with each other and merge on contact, so ammo can be
+// combined in the row, or launched up over it and dropped back in.
+const LAYER_TUBE = 0;      // held in the ammo row
+const LAYER_PLAY = 1;      // free: launched and flying, or down in the board
+const SQUEEZE = 0.1;       // per substep: how firmly the ammo row squeezes held blobs into pills
+const CAPTURE_AFTER = 0.15; // sim seconds: a launched blob that hasn't dropped into the board gets caught by the row again
 
 const TAU = Math.PI * 2;
 
@@ -61,20 +67,12 @@ const TAU = Math.PI * 2;
 const WALLS = [
   [1, 0, RB, MU_WALL],                                                         // left
   [-1, 0, RB - WORLD_W, MU_WALL],                                              // right
-  [0, 1, RB, 0.1],                                                             // ceiling
+  [0, 1, RB, 0],                                                               // ceiling (slippery, so tossed ammo glides along it)
   [0, -1, RB - WORLD_H, MU_WALL],                                              // floor
   [Math.SQRT1_2, -Math.SQRT1_2, -(WORLD_H - CHAMFER) * Math.SQRT1_2 + RB, MU_WALL],             // bottom-left chamfer
   [-Math.SQRT1_2, -Math.SQRT1_2, (-WORLD_W - (WORLD_H - CHAMFER)) * Math.SQRT1_2 + RB, MU_WALL], // bottom-right chamfer
 ];
 const CEILING = 2;
-
-// The ammo tube at the top: a frictionless channel that squeezes blobs into pills.
-const TUBE_WALLS = [
-  [0, 1, TUBE_TOP + RB],
-  [0, -1, RB - TUBE_BOT],
-  [1, 0, TUBE_L + RB],
-  [-1, 0, RB - TUBE_R],
-];
 
 function blobRadius(v) { return R1 * Math.pow(v, SIZE_EXP); }
 function ringRadius(v) { return blobRadius(v) - OUTLINE; }
@@ -120,6 +118,8 @@ class SoftBlob {
     this.invMass = 1 / Math.max(0.2, this.areaFull / n / 70);
     this.morph = null;     // { t, dur, restFrom, rest2From, areaFrom }
     this.entering = 0;     // +1/-1 while sliding into the tube through the right/left wall
+    this.inPlay = layer === LAYER_PLAY;  // has dropped below the ammo row into the board
+    this.launchAge = -1;   // sim seconds since launched from the row, while still above the board
     this.start = 0;
     this.index = 0;
     this.init = null;      // initial bead state, consumed by World.rebuild()
@@ -247,14 +247,21 @@ class World {
     return this.addBlob(b, xs, ys, side ? -side * 500 : 0, 0);
   }
 
+  setLayer(b, layer) {
+    b.layer = layer;
+    for (let k = 0; k < b.n; k++) this.pl[b.start + k] = layer;
+  }
+
+  // Launch a held blob in any direction. It flies free; if it drops into the
+  // board it is in play, otherwise the ammo row catches it again.
   shoot(b, vx, vy) {
-    b.layer = LAYER_PLAY;
+    this.setLayer(b, LAYER_PLAY);
     for (let k = 0; k < b.n; k++) {
-      const i = b.start + k;
-      this.pl[i] = LAYER_PLAY;
-      this.vx[i] = vx;
-      this.vy[i] = vy;
+      this.vx[b.start + k] = vx;
+      this.vy[b.start + k] = vy;
     }
+    b.inPlay = false;
+    b.launchAge = 0;
     b.shotAge = 0;
     b.pendingImpact = true;
     b.mergeLock = 0;
@@ -263,7 +270,13 @@ class World {
   // Fuse two equal blobs. The new ring starts on the outline of the pair and then
   // contracts to its (smaller) round size, so it never spawns inside a neighbour.
   merge(a, b) {
-    const nb = new SoftBlob(a.value * 2, LAYER_PLAY);
+    // Merging in the ammo row (or a launched blob landing on ammo) makes new ammo;
+    // anything already down in the board stays in play.
+    const intoBoard = a.inPlay || b.inPlay;
+    const held = !intoBoard && (a.layer === LAYER_TUBE || b.layer === LAYER_TUBE);
+    const nb = new SoftBlob(a.value * 2, held ? LAYER_TUBE : LAYER_PLAY);
+    nb.inPlay = intoBoard;
+    if (!held && !intoBoard) nb.launchAge = Math.max(a.launchAge, b.launchAge, 0);
     const wa = a.areaFull, wb = b.areaFull, ws = wa + wb;
     const cx = (a.cx * wa + b.cx * wb) / ws;
     const cy = (a.cy * wa + b.cy * wb) / ws;
@@ -282,6 +295,25 @@ class World {
       }
     }
     fillGaps(far, ringRadius(nb.value) * 0.6);
+    // Don't let the new outline wrap around a neighbour that sits between or
+    // beside the pair (e.g. ammo tossed over another blob onto its twin).
+    const minX = Math.min(a.minX, b.minX) - 2 * RB, maxX = Math.max(a.maxX, b.maxX) + 2 * RB;
+    const minY = Math.min(a.minY, b.minY) - 2 * RB, maxY = Math.max(a.maxY, b.maxY) + 2 * RB;
+    for (const o of this.blobs) {
+      if (o === a || o === b || o.dead) continue;
+      if (o.maxX < minX || o.minX > maxX || o.maxY < minY || o.minY > maxY) continue;
+      for (let k = 0; k < o.n; k++) {
+        const dx = x[o.start + k] - cx, dy = y[o.start + k] - cy;
+        const d = Math.sqrt(dx * dx + dy * dy);
+        let bin = Math.round(Math.atan2(dy, dx) / TAU * n) % n;
+        if (bin < 0) bin += n;
+        for (let s = -1; s <= 1; s++) {
+          const bi = (bin + s + n) % n;
+          const limit = Math.max(RB, d - 2 * RB);
+          if (far[bi] > limit) far[bi] = limit;
+        }
+      }
+    }
     const xs = new Float64Array(n), ys = new Float64Array(n);
     for (let k = 0; k < n; k++) {
       const ang = TAU * k / n, r = Math.max(far[k], RB);
@@ -317,7 +349,7 @@ class World {
     for (const b of this.blobs) {
       this.bEnter[b.index] = b.entering;
       this.bValue[b.index] = b.value;
-      this.bCanMerge[b.index] = b.layer === LAYER_PLAY && b.mergeLock <= 0 ? 1 : 0;
+      this.bCanMerge[b.index] = !b.entering && b.mergeLock <= 0 ? 1 : 0;
     }
     for (let s = 0; s < SUBSTEPS; s++) this.substep(h);
     this.postStep(dt);
@@ -493,7 +525,7 @@ class World {
     const bv = this.bValue, cm = this.bCanMerge, bt = this.bTouch, mp = this.mergePairs;
     let cp = this.stickPairs, ncp = 0;
     for (let i = 0; i < n; i++) {
-      const c = pcell[i], oi = po[i], li = pl[i];
+      const c = pcell[i], oi = po[i];
       for (let oy = -gx; oy <= gx; oy += gx) {
         for (let ox = -1; ox <= 1; ox++) {
           const cc = c + oy + ox;
@@ -502,12 +534,11 @@ class World {
             const j = sorted[k];
             if (j <= i) continue;
             const oj = po[j];
-            if (pl[j] !== li) continue;
             let dx = x[j] - x[i], dy = y[j] - y[i];
             const d2 = dx * dx + dy * dy;
             if (d2 >= DM2) continue;
-            // touching (or nearly) beads of different blobs in play get the sticky damper
-            if (oj !== oi && li === LAYER_PLAY) {
+            // touching (or nearly) beads of different blobs get the sticky damper
+            if (oj !== oi) {
               if (ncp + 2 > cp.length) {
                 const grown = new Int32Array(cp.length * 2);
                 grown.set(cp);
@@ -533,7 +564,7 @@ class World {
             // *segments*, not its beads, so surfaces are smooth and slide freely
             // instead of meshing together like gear teeth.
             const hit = this.pointEdge(i, j) | this.pointEdge(j, i);
-            if (hit && li === LAYER_PLAY) {
+            if (hit) {
               bt[oi] = 1; bt[oj] = 1;
               if (cm[oi] && cm[oj] && bv[oi] === bv[oj]) {
                 cm[oi] = 0; cm[oj] = 0;
@@ -676,12 +707,11 @@ class World {
         if (w !== CEILING && !tube) bt[po[i]] = 1;
       }
       if (tube) {
-        for (let w = 0; w < TUBE_WALLS.length; w++) {
-          if ((w === 2 && skipL) || (w === 3 && skipR)) continue;
-          const P = TUBE_WALLS[w];
-          const pen = P[2] - (P[0] * x[i] + P[1] * y[i]);
-          if (pen > 0) { x[i] += P[0] * pen; y[i] += P[1] * pen; }
-        }
+        // the ammo row is a soft field, not a pipe: it squeezes held blobs into
+        // pills and draws in anything that drops back into it from above
+        const top = TUBE_TOP + RB, bot = TUBE_BOT - RB;
+        if (y[i] < top) y[i] += (top - y[i]) * SQUEEZE;
+        else if (y[i] > bot) y[i] -= (y[i] - bot) * SQUEEZE;
       }
     }
   }
@@ -724,8 +754,10 @@ class World {
         if (b.badT > 0.15) { this.resetShape(b, b.cx, b.cy); continue; }
       } else b.badT = 0;
 
+      // held ammo jiggles exactly like everything else; the row just adds some
+      // drag so ammo settles in place
       const play = b.layer === LAYER_PLAY;
-      const fi = play ? fiP : fiT, fa = play ? faP : faT;
+      const fi = fiP, fa = play ? faP : faT;
       const mvx = b.vx, mvy = b.vy;
       const s = b.start, n = b.n, tx = this.gradX, ty = this.gradY;
       for (let k = 0; k < n; k++) {
@@ -745,9 +777,24 @@ class World {
       if (b.flash > 0) b.flash = Math.max(0, b.flash - dt * 6);
       if (b.entering > 0 && b.maxX <= TUBE_R + 0.5) b.entering = 0;
       else if (b.entering < 0 && b.minX >= TUBE_L - 0.5) b.entering = 0;
-      if (b.pendingImpact && this.bTouch[b.index]) {
+      if (b.pendingImpact && this.bTouch[b.index] && (b.inPlay || b.launchAge > 0.1)) {
         b.pendingImpact = false;
         this.events.push({ type: 'impact', blob: b, speed: b.speedPrev });
+      }
+      // A launched blob is in play once it drops below the ammo row. If instead it
+      // went up or sideways and is now coming back down, the row catches it again.
+      if (play && !b.inPlay) {
+        b.launchAge += dt;
+        if (b.cy > TUBE_BOT + ringRadius(b.value) * 0.5) {
+          b.inPlay = true;
+          b.launchAge = -1;
+        } else if (b.launchAge > CAPTURE_AFTER && b.cy < TUBE_BOT &&
+                   ((b.vy > -20 && b.cy > TUBE_TOP) || (b.launchAge > 0.8 && b.speed < 40))) {
+          // caught once it has come back down into the row, or come to rest on top of it
+          this.setLayer(b, LAYER_TUBE);
+          b.launchAge = -1;
+          b.pendingImpact = false;
+        }
       }
     }
     this.tick = (this.tick || 0) + 1;
@@ -815,7 +862,6 @@ class World {
       for (let bi = 0; bi < B.length; bi++) {
         if (ai === bi) continue;
         const b = B[bi];
-        if (a.layer !== b.layer) continue;
         if (a.maxX < b.minX || a.minX > b.maxX || a.maxY < b.minY || a.minY > b.maxY) continue;
         for (let k = 0; k < a.n; k++) {
           const i = a.start + k;
@@ -861,12 +907,12 @@ class World {
     vx[i] = b.vx; vy[i] = b.vy;
   }
 
-  // Is a circle of radius r at (cx, cy) touching any blob in play?
-  circleHitsPlay(cx, cy, r) {
+  // Is a circle of radius r at (cx, cy) touching any blob other than `skip`?
+  circleHits(cx, cy, r, skip) {
     const { x, y } = this;
     const r2 = r * r;
     for (const b of this.blobs) {
-      if (b.layer !== LAYER_PLAY) continue;
+      if (b === skip) continue;
       if (cx + r < b.minX || cx - r > b.maxX || cy + r < b.minY || cy - r > b.maxY) continue;
       for (let k = 0; k < b.n; k++) {
         const dx = x[b.start + k] - cx, dy = y[b.start + k] - cy;
