@@ -153,10 +153,16 @@
     for (const k of [-1.5, -0.5, 0.5, 1.5]) G.world.spawnTube(spawnValue(), WORLD_W / 2 + k * 52);
   }
 
+  // Google Analytics events (the tag itself is in index.html); a no-op if it's blocked
+  function track(name, params) {
+    try { if (typeof gtag === 'function') gtag('event', name, params || {}); } catch { /* analytics unavailable */ }
+  }
+
   function startGame() {
     if (G.state !== 'title') newGame();
     G.state = 'play';
     showScreen(null);
+    track('game_start');
   }
 
   function gameOver() {
@@ -169,6 +175,7 @@
       store.set('best', G.best);
     }
     Sfx.over();
+    track('game_over', { score: G.score, biggest_blob: G.maxValue, shots: G.shots, new_best: isBest });
     $('overScore').textContent = G.score;
     $('overBest').textContent = 'best ' + G.best;
     $('newBest').hidden = !isBest || G.score === 0;
@@ -328,6 +335,7 @@
     store.set('ach', [...G.ach]);
     toast('achievement!', ACH_BY_ID[id].name);
     Sfx.achieve();
+    track('unlock_achievement', { achievement_id: id });
     for (const [pal, need] of Object.entries(PALETTE_UNLOCK)) {
       if (need === id) setTimeout(() => toast('new color style', pal + ' — pick it in the menu'), 900);
     }
